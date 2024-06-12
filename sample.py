@@ -32,7 +32,8 @@ def arg_parse():
     parser.add_argument("--controlnet", type=bool, default=False, 
                         help="If in demo mode, the controlnet can be added.")
     parser.add_argument("--character_input", action="store_true")
-    parser.add_argument("--content_character", type=str, default=None)
+    parser.add_argument("--character_list_path", type=str, default=None, 
+                        help="Path to a txt file containing characters to generate.")
     parser.add_argument("--content_image_path", type=str, default=None)
     parser.add_argument("--style_image_path", type=str, default=None)
     parser.add_argument("--save_image", action="store_true")
@@ -49,15 +50,15 @@ def arg_parse():
     return args
 
 
-def image_process(args, content_image=None, style_image=None):
+def image_process(args, content_character=None):
     if not args.demo:
         # Read content image and style image
         if args.character_input:
-            assert args.content_character is not None, "The content_character should not be None."
-            if not is_char_in_font(font_path=args.ttf_path, char=args.content_character):
+            assert content_character is not None, "The content_character should not be None."
+            if not is_char_in_font(font_path=args.ttf_path, char=content_character):
                 return None, None
             font = load_ttf(ttf_path=args.ttf_path)
-            content_image = ttf2im(font=font, char=args.content_character)
+            content_image = ttf2im(font=font, char=content_character)
             content_image_pil = content_image.copy()
         else:
             content_image = Image.open(args.content_image_path).convert('RGB')
@@ -66,11 +67,11 @@ def image_process(args, content_image=None, style_image=None):
     else:
         assert style_image is not None, "The style image should not be None."
         if args.character_input:
-            assert args.content_character is not None, "The content_character should not be None."
-            if not is_char_in_font(font_path=args.ttf_path, char=args.content_character):
+            assert content_character is not None, "The content_character should not be None."
+            if not is_char_in_font(font_path=args.ttf_path, char=content_character):
                 return None, None
             font = load_ttf(ttf_path=args.ttf_path)
-            content_image = ttf2im(font=font, char=args.content_character)
+            content_image = ttf2im(font=font, char=content_character)
         else:
             assert content_image is not None, "The content image should not be None."
         content_image_pil = None
@@ -123,7 +124,7 @@ def load_fontdiffuer_pipeline(args):
     return pipe
 
 
-def sampling(args, pipe, content_image=None, style_image=None):
+def sampling(args, pipe):
     if not args.demo:
         os.makedirs(args.save_image_dir, exist_ok=True)
         # saving sampling config
@@ -131,55 +132,66 @@ def sampling(args, pipe, content_image=None, style_image=None):
 
     if args.seed:
         set_seed(seed=args.seed)
-    
-    content_image, style_image, content_image_pil = image_process(args=args, 
-                                                                  content_image=content_image, 
-                                                                  style_image=style_image)
-    if content_image == None:
-        print(f"The content_character you provided is not in the ttf. \
-                Please change the content_character or you can change the ttf.")
-        return None
 
-    with torch.no_grad():
-        content_image = content_image.to(args.device)
-        style_image = style_image.to(args.device)
-        print(f"Sampling by DPM-Solver++ ......")
-        start = time.time()
-        images = pipe.generate(
-            content_images=content_image,
-            style_images=style_image,
-            batch_size=1,
-            order=args.order,
-            num_inference_step=args.num_inference_steps,
-            content_encoder_downsample_size=args.content_encoder_downsample_size,
-            t_start=args.t_start,
-            t_end=args.t_end,
-            dm_size=args.content_image_size,
-            algorithm_type=args.algorithm_type,
-            skip_type=args.skip_type,
-            method=args.method,
-            correcting_x0_fn=args.correcting_x0_fn)
-        end = time.time()
+    if args.character_list_path:
+        with open(args.character_list_path, 'r', encoding='utf-8') as f:
+            characters = list(f.read().strip())  # 将文件内容拆分为单个字符
+    else:
+        raise ValueError("character_list_path must be provided.")
 
-        if args.save_image:
-            print(f"Saving the image ......")
-            save_single_image(save_dir=args.save_image_dir, image=images[0])
-            if args.character_input:
-                save_image_with_content_style(save_dir=args.save_image_dir,
-                                            image=images[0],
-                                            content_image_pil=content_image_pil,
-                                            content_image_path=None,
-                                            style_image_path=args.style_image_path,
-                                            resolution=args.resolution)
-            else:
-                save_image_with_content_style(save_dir=args.save_image_dir,
-                                            image=images[0],
-                                            content_image_pil=None,
-                                            content_image_path=args.content_image_path,
-                                            style_image_path=args.style_image_path,
-                                            resolution=args.resolution)
-            print(f"Finish the sampling process, costing time {end - start}s")
-        return images[0]
+    for char in characters:
+        char = char.strip()  # Ensure no leading/trailing whitespace
+        if len(char) != 1:
+            print(f"Invalid character '{char}'. Skipping.")
+            continue
+
+        content_image, style_image, content_image_pil = image_process(args=args, content_character=char)
+        if content_image is None:
+            print(f"The content_character '{char}' is not in the ttf. Skipping.")
+            continue
+
+        with torch.no_grad():
+            content_image = content_image.to(args.device)
+            style_image = style_image.to(args.device)
+            print(f"Sampling by DPM-Solver++ for character '{char}' ......")
+            start = time.time()
+            images = pipe.generate(
+                content_images=content_image,
+                style_images=style_image,
+                batch_size=1,
+                order=args.order,
+                num_inference_step=args.num_inference_steps,
+                content_encoder_downsample_size=args.content_encoder_downsample_size,
+                t_start=args.t_start,
+                t_end=args.t_end,
+                dm_size=args.content_image_size,
+                algorithm_type=args.algorithm_type,
+                skip_type=args.skip_type,
+                method=args.method,
+                correcting_x0_fn=args.correcting_x0_fn)
+            end = time.time()
+
+            if args.save_image:
+                print(f"Saving the image for character '{char}' ......")
+                save_single_image(save_dir=args.save_image_dir, image=images[0], image_name=f'{char}.png')
+                if args.character_input:
+                    save_image_with_content_style(save_dir=args.save_image_dir,
+                                                  image=images[0],
+                                                  content_image_pil=content_image_pil,
+                                                  content_image_path=None,
+                                                  style_image_path=args.style_image_path,
+                                                  resolution=args.resolution)
+                else:
+                    save_image_with_content_style(save_dir=args.save_image_dir,
+                                                  image=images[0],
+                                                  content_image_pil=None,
+                                                  content_image_path=args.content_image_path,
+                                                  style_image_path=args.style_image_path,
+                                                  resolution=args.resolution)
+                print(f"Finish the sampling process for character '{char}', costing time {end - start}s")
+    return images[0]
+
+
 
 
 def load_controlnet_pipeline(args,
