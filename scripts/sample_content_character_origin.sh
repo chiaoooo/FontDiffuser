@@ -1,10 +1,10 @@
 python sample.py \
     --ckpt_dir="ckpt/" \
-    --style_image_path="mydata/sampling/U+6b4c.png" \
+    --style_image_path="mydata/sampling/U+77BC.png" \
     --save_image \
     --character_input \
-    --character_list_path="characters.txt" \
-    --save_image_dir="outputs_paper/" \
+    --content_character="臉" \
+    --save_image_dir="outputs/" \
     --device="cuda:0" \
     --algorithm_type="dpmsolver++" \
     --guidance_type="classifier-free" \
